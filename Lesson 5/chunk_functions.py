@@ -1,9 +1,9 @@
-import os
 import multiprocessing as mp
-from gc import disable as gc_disable, enable as gc_enable
+from multiprocessing import Lock, Value
+import os
 
 
-def get_file_chunks(file_name: str, max_cpu: int = 8) -> tuple[int, list[tuple[str, int, int]]]:
+def get_file_chunks(file_name: str, max_cpu: int = 8) -> tuple[int, list[tuple[str, int, int]], int]:
     """Split file into chunks based on the number of available CPUs."""
     cpu_count = min(max_cpu, mp.cpu_count())
 
@@ -29,41 +29,49 @@ def get_file_chunks(file_name: str, max_cpu: int = 8) -> tuple[int, list[tuple[s
                         break
             start_end.append((file_name, chunk_start, chunk_end))
             chunk_start = chunk_end
-    return cpu_count, start_end
+    return cpu_count, start_end, file_size
 
 
-def _process_file_chunk(file_name: str, chunk_start: int, chunk_end: int) -> dict:
+def _process_file_chunk(file_name: str, chunk_start: int, chunk_end: int, counter: Value, lock: Lock) -> dict:
     """Process each file chunk separately, calculating min, max, sum, and count for measurements."""
-    result = {}
+    words_num = 0
+    processed_bytes = 0
+    words = {}
     with open(file_name, mode="rb") as f:
         f.seek(chunk_start)
-        gc_disable()  # Optimize performance by disabling garbage collection
-        # Skip partial line at the start if not at the beginning of the file
         if chunk_start != 0:
-            f.readline()
+            f.readline()  # Skip partial line at the start if not at the beginning of the file
         line = f.readline()
         while line and f.tell() <= chunk_end:
+            processed_bytes += len(line)
             try:
-                location, measurement = line.decode('utf-8').strip().split(";")
-                measurement = float(measurement)
-                if location in result:
-                    result[location]['min'] = min(result[location]['min'], measurement)
-                    result[location]['max'] = max(result[location]['max'], measurement)
-                    result[location]['sum'] += measurement
-                    result[location]['count'] += 1
+                _word, _, match_count, _ = line.decode('utf-8').strip().split("\t")
+                if _word in words:
+                    words[_word] += int(match_count)
                 else:
-                    result[location] = {'min': measurement, 'max': measurement, 'sum': measurement, 'count': 1}
+                    words[_word] = int(match_count)
+                words_num += 1
+
+                # Update the counter safely using lock
+                if processed_bytes % 1000 == 0:  # Update counter every 1000 words for example
+                    with lock:
+                        counter.value += processed_bytes
+                        processed_bytes = 0
             except ValueError:
-                # Ignore lines that do not conform to expected format
-                pass
+                pass  # Handle decoding or splitting errors
             line = f.readline()
-        gc_enable()  # Re-enable garbage collection after processing
-    return result
+
+        # Update any remaining count not added in the loop
+        with lock:
+            counter.value += words_num % 1000
+
+    return words
 
 
 if __name__ == "__main__":
     # Example usage
-    cpu_count, chunks = get_file_chunks("C:/Users/vlady/googlebooks-eng-all-1gram-20120701-a")
+    cpu_count, chunks, file_size = get_file_chunks("C:/Users/vlady/googlebooks-eng-all-1gram-20120701-a")
+    print(f"File size: {file_size}")
     print(f"CPU Count: {cpu_count}")
     for chunk in chunks:
         print(f"Chunk from {chunk[1]} to {chunk[2]} in {chunk[0]}")

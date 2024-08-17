@@ -1,5 +1,3 @@
-
-
 def count_words(lines: list[str]):
     words = {}
     for line in lines:
@@ -10,9 +8,10 @@ def count_words(lines: list[str]):
             words[_word] = int(match_count)
     return words
 
+
 def mp_count_words(lines: list[str], counter, lock):
     words_num = 0
-    step = 10000
+    step = 1801526075
     words = {}
     for line in lines:
         _word, _, match_count, _ = line.split("\t")
@@ -21,7 +20,7 @@ def mp_count_words(lines: list[str], counter, lock):
         else:
             words[_word] = int(match_count)
 
-        #monitoring
+        # Monitoring
         words_num += 1
         if len(words) % step == 0:
             with lock:
@@ -29,6 +28,3 @@ def mp_count_words(lines: list[str], counter, lock):
     with lock:
         counter.value += words_num
         return words
-
-
-    

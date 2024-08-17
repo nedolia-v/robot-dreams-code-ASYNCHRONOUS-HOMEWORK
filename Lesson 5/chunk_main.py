@@ -1,12 +1,12 @@
+import argparse
 import asyncio
 import time
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
-from itertools import batched
-from functions import mp_count_words
+from chunk_functions import _process_file_chunk, get_file_chunks
 
-FILE_PATH = "C:/Users/vlady/googlebooks-eng-all-1gram-20120701-a"
+# FILE_PATH = "C:/Users/vlady/googlebooks-eng-all-1gram-20120701-a"
 WORD = "ära"
 
 
@@ -29,35 +29,32 @@ def reduce_words(target: dict, source: dict) -> dict:
 async def monitoring(counter, counter_lock, total):
     while True:
         with counter_lock:
-            print(f"Progress: {counter.value}/{total}")
+            print(f"Progress: {counter.value}/{total} ({(counter.value/total)*100:.2f}%)")
             if counter.value == total:
                 break
         await asyncio.sleep(1)
 
 
-async def main():
+async def main(file_path):
     loop = asyncio.get_event_loop()
     words = {}
+    cpu_count, chunks, file_size = get_file_chunks(file_path)
 
-    with timer("Reading file"):
-        with open(FILE_PATH, "r", encoding="utf-8") as file:
-            data = file.readlines()
-
-    batch_size = 60_000
     with mp.Manager() as manager:
         counter = manager.Value("i", 0)
         counter_lock = manager.Lock()
 
         monitoring_task = asyncio.create_task(
-            monitoring(counter, counter_lock, len(data))
+            monitoring(counter, counter_lock, file_size)
         )
 
         with ProcessPoolExecutor() as executor:
             with timer("Processing data"):
                 results = []
-                for batch in batched(data, batch_size):
+                for file_name, chunk_start, chunk_end in chunks:
                     results.append(
-                        loop.run_in_executor(executor, mp_count_words, batch, counter, counter_lock)
+                        loop.run_in_executor(executor, _process_file_chunk,
+                                             file_name, chunk_start, chunk_end, counter, counter_lock)
                     )
                 done, _ = await asyncio.wait(results)
         try:
@@ -77,5 +74,9 @@ async def main():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Process some integers.")
+    parser.add_argument('file_path', type=str, help='File path to process')
+    args = parser.parse_args()
+
     with timer("Total time"):
-        asyncio.run(main())
+        asyncio.run(main(args.file_path))
